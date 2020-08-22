@@ -1,97 +1,105 @@
+import asyncio
+import itertools
 import os
 import sys
-from multiprocessing import Pool
 from string import Template
-from time import sleep
-from urllib.parse import urlparse
-import requests
-from urllib3.exceptions import NewConnectionError
+
+import aiofiles
+import aiohttp
 
 API_ENDPOINT = Template("https://api.thesneakerdatabase.com/v1/sneakers?limit=100&page=$page")
-inf = sys.maxsize
+
+img_size_args = {
+    **dict.fromkeys(("s", "small"), "thumbUrl"),
+    **dict.fromkeys(("medium", "m"), "imageUrl"),
+    **dict.fromkeys(("large", "l"), "smallImageUrl")
+}
 
 
-def download_images(output_dir: str, img_size="s", limit=inf, starting_page=0):
-    size_arg = get_img_size_arg(img_size)
-    if limit < 0 or starting_page < 0:
-        raise ValueError("Starting page number and limit must not be negative!")
+async def start_download(output_dir="images", starting_page=0, limit=sys.maxsize, img_size="s"):
+    try:
+        size_arg = img_size_args[img_size]
+    except IndexError:
+        raise ValueError(f"Argument size has to be in {list(img_size_args.keys())}. Got '{img_size}' instead.")
+    if starting_page < 0:
+        raise ValueError("Starting page number must not be negative!")
+
+    limit = max(10, limit)
 
     os.makedirs(output_dir, exist_ok=True)
 
-    pool = Pool()
-    image_urls = setup_image_urls_generator(size_arg, starting_page)
-    n_images = 0
-
-    while n_images < limit:
-        try:
-            urls = next(image_urls)
-        except StopIteration:
-            break
-
-        urls = urls[:min(len(urls), limit - n_images)]
-        pool.starmap_async(save_image, [(url, output_dir) for url in urls])
-        n_images += len(urls)
-
-    pool.close()
-    pool.join()
-
-    print(f"Successfully downloaded {n_images} images.", file=sys.stderr)
+    await download_images(output_dir, starting_page, limit, size_arg)
 
 
-def save_image(img_url: str, output_dir: str):
-    for attempt in (1, 2, 3):
-        try:
-            image = requests.get(img_url)
-            break
-        except NewConnectionError:
-            print(f"[{attempt}/3] Failed to fetch image from {img_url} due to connection error.", file=sys.stderr)
-            if attempt < 3:
-                print(f"Next attempt in {5 * attempt}s...")
-                sleep(5 * attempt)
-    else:
-        print("All trials failed. Returning...")
-        return
+async def download_images(output_dir="images", starting_page=0, limit=sys.maxsize, size_arg=img_size_args["s"]):
+    download_queue = asyncio.Queue()
+    save_queue = asyncio.Queue()
+    session = aiohttp.ClientSession()
 
-    filename = os.path.basename(urlparse(img_url).path)
-    filepath = os.path.join(output_dir, filename)
+    tasks = [
+        asyncio.Task(sneaker_jsons(size_arg, session, starting_page, download_queue)),
+        asyncio.Task(download_image(limit, session, download_queue, save_queue)),
+        asyncio.Task(save_image(output_dir, save_queue))
+    ]
 
-    with open(filepath, 'wb') as f:
-        print(f"Saving {filename}...")
-        f.write(image.content)
+    await asyncio.gather(*tasks)
+
+    await session.close()
 
 
-def setup_image_urls_generator(size_arg: str, starting_page: int) -> iter:
-    def image_urls_generator() -> list:
-        page = starting_page
-        while True:
-            sneakers = requests.get(API_ENDPOINT.substitute(page=page)).json()["results"]
-            if not sneakers:
-                print(f"API ran out of sneakers on page {page}.", file=sys.stderr)
+async def sneaker_jsons(size_arg: str, session: aiohttp.ClientSession, starting_page: int,
+                        download_queue: asyncio.Queue):
+    for page in itertools.count(starting_page):
+        async with session.get(API_ENDPOINT.substitute(page=page)) as resp:
+            content = await resp.json()
+            if len(content["results"]) > 0:
+                image_urls = [img_url["media"][size_arg] for img_url in content["results"]]
+                await download_queue.put(image_urls)
+            else:
+                download_queue.put_nowait(None)
                 break
 
-            image_urls = [img_url for sneaker in sneakers if (img_url := sneaker["media"][size_arg])]
-            page += 1
 
-            yield image_urls
+async def download_image(limit: int, session: aiohttp.ClientSession,
+                         download_queue: asyncio.Queue, save_queue: asyncio.Queue):
+    n_downloaded = 0
+    while n_downloaded < limit:
+        image_urls = await download_queue.get()
+        if image_urls is None:
+            break
 
-    return image_urls_generator()
+        while len(image_urls) > 0 and n_downloaded < limit:
+            image_url = image_urls.pop()
+            if image_url is None:
+                continue
+            else:
+                image = await session.get(image_url)
+                save_queue.put_nowait(image)
+                n_downloaded += 1
+
+    save_queue.put_nowait(None)
+    download_queue.task_done()
+    save_queue.task_done()
 
 
-def get_img_size_arg(img_size: str) -> str:
-    valid_sizes = {
-        ("small", "s"): "thumbUrl",
-        ("medium", "m"): "imageUrl",
-        ("large", "l"): "smallImageUrl"
-    }
+async def save_image(output_dir: str, save_queue: asyncio.Queue):
+    while True:
+        image = await save_queue.get()
+        if image is None:
+            break
 
-    for size_key, size_arg in valid_sizes.items():
-        if img_size in size_key:
-            return size_arg
-    else:
-        raise ValueError(f"Argument size has to be in {list(valid_sizes.keys())}. Got '{img_size}' instead.")
+        filename = os.path.basename(image.url.path)
+        if filename == "New-Product-Placeholder-Default.jpg":
+            print("Skipping sneaker with no image...")
+            continue
+        else:
+            filepath = os.path.join(output_dir, filename)
+
+            async with aiofiles.open(filepath, "wb") as f:
+                print(f"Saving {filename}...")
+                await f.write(await image.read())
 
 
 if __name__ == "__main__":
     # todo cmd args?
-    print("Downloading all available images...")
-    download_images("images", starting_page=297)
+    asyncio.run(start_download())
