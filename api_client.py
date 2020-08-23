@@ -11,17 +11,13 @@ from logger import Logger
 
 
 class AsyncApiClient:
-    _SNEAKERS_PER_PAGE = 100
-    _API_ENDPOINT = Template(f"https://api.thesneakerdatabase.com/v1/sneakers?limit={_SNEAKERS_PER_PAGE}&page=$page")
-    _img_size_args = {
-        "s": "thumbUrl",
-        "m": "imageUrl",
-        "l": "smallImageUrl"
-    }
+    __SNEAKERS_PER_PAGE = 100
+    __API_ENDPOINT = Template(f"https://api.thesneakerdatabase.com/v1/sneakers?limit={__SNEAKERS_PER_PAGE}&page=$page")
+    __IMG_SIZE_ARGS = dict(s="thumbUrl", m="imageUrl", l="smallImageUrl")
 
     def __init__(self, output_dir: str, limit=sys.maxsize, starting_page=0, image_size="s", log_level="INFO"):
         try:
-            size_arg = AsyncApiClient._img_size_args[image_size]
+            size_arg = AsyncApiClient.__IMG_SIZE_ARGS[image_size]
         except IndexError:
             raise ValueError(f"Argument size has to be one from 's' (default), 'm', 'l'! Got '{image_size}' instead.")
         if starting_page < 0 or limit < 0:
@@ -66,14 +62,14 @@ class AsyncApiClient:
         page = itertools.count(self.starting_page)
 
         while n_fetched < self.limit:
-            resp = await self.session.get(self._API_ENDPOINT.substitute(page=next(page)))
+            resp = await self.session.get(self.__API_ENDPOINT.substitute(page=next(page)))
             sneakers = (await resp.json())["results"]
             if len(sneakers) == 0:
                 self.log.warning("API ran out of sneakers! Cannot fetch more images.")
                 break
 
             image_urls = [sneaker["media"][self.image_size]
-                          for sneaker in sneakers[:min(self._SNEAKERS_PER_PAGE, self.limit - n_fetched)]
+                          for sneaker in sneakers[:min(self.__SNEAKERS_PER_PAGE, self.limit - n_fetched)]
                           if sneaker["media"][self.image_size] is not None]
 
             for image_url in image_urls:

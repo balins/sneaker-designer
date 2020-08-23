@@ -7,15 +7,15 @@ from api_client import AsyncApiClient
 
 def download_samples():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output", dest="directory", nargs="?", default="images",
+    parser.add_argument("-o", "--output", dest="directory", nargs="?", default="images",
                         help="Directory where to save downloaded images")
-    parser.add_argument("--limit", dest="limit", nargs="?", default=sys.maxsize, type=int,
+    parser.add_argument("-l", "--limit", dest="limit", nargs="?", default=sys.maxsize, type=int,
                         help="Limit the number of images to download")
-    parser.add_argument("--from", dest="page", nargs="?", default=0, type=int,
+    parser.add_argument("-f", "--from", dest="page", nargs="?", default=0, type=int,
                         help="Specify a starting page for API json query (defaults to 0)")
-    parser.add_argument("--size", dest="image_size", nargs="?", default="s",
+    parser.add_argument("-s", "--size", dest="image_size", nargs="?", default="s",
                         help=f"Pick the size of downloaded images from: 's' (default), 'm', 'l'")
-    parser.add_argument("--log", dest="log_level", nargs="?", default="INFO",
+    parser.add_argument("-L", "--log", dest="log_level", nargs="?", default="INFO",
                         help=f"Pick log level from the Python Standard Library 'logging' module (defaults to 'INFO')")
     args = parser.parse_args()
 
