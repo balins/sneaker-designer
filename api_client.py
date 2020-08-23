@@ -1,7 +1,5 @@
-import argparse
 import asyncio
 import itertools
-import logging
 import os
 import sys
 from string import Template
@@ -9,129 +7,107 @@ from string import Template
 import aiofiles
 import aiohttp
 
-_SNEAKERS_PER_PAGE = 100
-_API_ENDPOINT = Template(f"https://api.thesneakerdatabase.com/v1/sneakers?limit={_SNEAKERS_PER_PAGE}&page=$page")
-_LOG_LEVELS = logging._nameToLevel
-
-_img_size_args = {
-    **dict.fromkeys(("s", "small"), "thumbUrl"),
-    **dict.fromkeys(("medium", "m"), "imageUrl"),
-    **dict.fromkeys(("large", "l"), "smallImageUrl")
-}
+from logger import Logger
 
 
-class _Color:
-    RESET = "\u001b[0m"
-    RED = "\u001b[31m"
-    GREEN = "\u001b[32m"
-    MAGENTA = "\u001b[35m"
-    CYAN = "\u001b[36m"
-    GRAY = "\u001b[8m"
+class AsyncApiClient:
+    _SNEAKERS_PER_PAGE = 100
+    _API_ENDPOINT = Template(f"https://api.thesneakerdatabase.com/v1/sneakers?limit={_SNEAKERS_PER_PAGE}&page=$page")
+    _img_size_args = {
+        "s": "thumbUrl",
+        "m": "imageUrl",
+        "l": "smallImageUrl"
+    }
 
+    def __init__(self, output_dir: str, limit=sys.maxsize, starting_page=0, image_size="s", log_level="INFO"):
+        try:
+            size_arg = AsyncApiClient._img_size_args[image_size]
+        except IndexError:
+            raise ValueError(f"Argument size has to be one from 's' (default), 'm', 'l'! Got '{image_size}' instead.")
+        if starting_page < 0 or limit < 0:
+            raise ValueError("Starting page number and limit must not be negative!")
 
-logging.basicConfig(format=f"{_Color.GRAY}[%(asctime)s %(levelname)s]{_Color.RESET} %(message)s{_Color.RESET}",
-                    level=logging.INFO, datefmt="%H:%M:%S")
+        os.makedirs(output_dir, exist_ok=True)
 
+        self.output_dir = output_dir
+        self.limit = limit
+        self.starting_page = starting_page
+        self.image_size = size_arg
+        self.log = Logger("AsyncApiClient")
+        self.log.setLevel(log_level)
+        self.session = None
+        self.download_queue = None
+        self.save_queue = None
 
-def _parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--output", dest="directory", nargs="?", default="images",
-                        help="Directory where to save downloaded images")
-    parser.add_argument("--limit", dest="limit", nargs="?", default=sys.maxsize, type=int,
-                        help="Limit the number of images to download")
-    parser.add_argument("--from", dest="page", nargs="?", default=0, type=int,
-                        help="Specify a starting page for API json query (defaults to 0)")
-    parser.add_argument("--size", dest="image_size", nargs="?", default="s",
-                        help=f"Pick the size of downloaded images from {list(_img_size_args.keys())} (defaults to 's')")
-    parser.add_argument("--log", dest="log_level", nargs="?", default="INFO",
-                        help=f"Pick log level from {list(_LOG_LEVELS.keys())} (defaults to 'INFO')")
-    _args = parser.parse_args()
+    async def start_bulk_download(self):
+        self.log.info("Starting download...")
+        self.download_queue, self.save_queue = asyncio.Queue(), asyncio.Queue()
 
-    try:
-        size_arg = _img_size_args[_args.image_size]
-    except IndexError:
-        raise ValueError(f"Argument size has to be in {list(_img_size_args.keys())}! Got '{_args.image_size}' instead.")
-    if _args.page < 0 or _args.limit < 0:
-        raise ValueError("Starting page number and limit must not be negative!")
-    if _args.log_level not in _LOG_LEVELS.keys():
-        raise ValueError(f"Log level has to be in {list(_LOG_LEVELS.keys())}! Got '{_args.log_level}' instead.")
-    os.makedirs(_args.directory, exist_ok=True)
-    logging.basicConfig(level=_LOG_LEVELS[_args.log_level])
-
-    return dict(output_dir=_args.directory, starting_page=_args.page, limit=_args.limit, size_arg=size_arg)
-
-
-async def start_bulk_download(output_dir: str, limit=sys.maxsize, starting_page=0, size_arg="thumbUrl"):
-    download_queue, save_queue = asyncio.Queue(), asyncio.Queue()
-
-    logging.info("%sStarting download..." % _Color.GREEN)
-
-    async with aiohttp.ClientSession() as session:
         tasks = [
-            asyncio.Task(_url_fetcher(limit, size_arg, starting_page, session, download_queue)),
-            asyncio.Task(_image_fetcher(session, download_queue, save_queue)),
-            asyncio.Task(_image_writer(output_dir, save_queue))
+            asyncio.Task(self.__url_fetcher()),
+            asyncio.Task(self.__image_fetcher()),
+            asyncio.Task(self.__image_writer())
         ]
-        await asyncio.gather(*tasks)
 
-    logging.info("%sAll jobs complete!" % _Color.GREEN)
+        try:
+            self.session = aiohttp.ClientSession()
+            await asyncio.gather(*tasks)
+        except Exception:
+            self.log.error("Unexpected error!")
+            raise
+        finally:
+            self.log.warning("Terminating...")
+            await self.session.close()
 
+        self.log.info("All jobs complete!")
 
-async def _url_fetcher(limit: int, size_arg: str, starting_page: int,
-                       session: aiohttp.ClientSession, download_queue: asyncio.Queue):
-    n_fetched = 0
-    page = itertools.count(starting_page)
+    async def __url_fetcher(self):
+        n_fetched = 0
+        page = itertools.count(self.starting_page)
 
-    while n_fetched < limit:
-        resp = await session.get(_API_ENDPOINT.substitute(page=next(page)))
-        sneakers = (await resp.json())["results"]
-        if len(sneakers) == 0:
-            logging.warning("%sAPI ran out of sneakers! Cannot fetch more images." % _Color.RED)
-            break
+        while n_fetched < self.limit:
+            resp = await self.session.get(self._API_ENDPOINT.substitute(page=next(page)))
+            sneakers = (await resp.json())["results"]
+            if len(sneakers) == 0:
+                self.log.warning("API ran out of sneakers! Cannot fetch more images.")
+                break
 
-        image_urls = [sneaker["media"][size_arg]
-                      for sneaker in sneakers[:min(_SNEAKERS_PER_PAGE, limit - n_fetched)]
-                      if sneaker["media"][size_arg] is not None]
+            image_urls = [sneaker["media"][self.image_size]
+                          for sneaker in sneakers[:min(self._SNEAKERS_PER_PAGE, self.limit - n_fetched)]
+                          if sneaker["media"][self.image_size] is not None]
 
-        for image_url in image_urls:
-            download_queue.put_nowait(image_url)
-            n_fetched += 1
+            for image_url in image_urls:
+                self.download_queue.put_nowait(image_url)
+                n_fetched += 1
 
-    download_queue.put_nowait(None)
-    logging.info("%sFetching urls complete!" % _Color.CYAN)
+        self.download_queue.put_nowait(None)
+        self.log.info("Fetching urls complete!")
 
+    async def __image_fetcher(self):
+        while True:
+            image_url = await self.download_queue.get()
+            if image_url is None:
+                break
 
-async def _image_fetcher(session: aiohttp.ClientSession, download_queue: asyncio.Queue, save_queue: asyncio.Queue):
-    while True:
-        image_url = await download_queue.get()
-        if image_url is None:
-            break
+            image = await self.session.get(image_url)
+            self.save_queue.put_nowait(image)
 
-        image = await session.get(image_url)
-        save_queue.put_nowait(image)
+        self.download_queue.task_done()
+        self.save_queue.put_nowait(None)
+        self.log.info("Fetching images complete!")
 
-    download_queue.task_done()
-    save_queue.put_nowait(None)
-    logging.info("%sFetching images complete!" % _Color.CYAN)
+    async def __image_writer(self):
+        while True:
+            image = await self.save_queue.get()
+            if image is None:
+                break
 
+            filename = os.path.basename(image.url.path)
+            filepath = os.path.join(self.output_dir, filename)
 
-async def _image_writer(output_dir: str, save_queue: asyncio.Queue):
-    while True:
-        image = await save_queue.get()
-        if image is None:
-            break
+            async with aiofiles.open(filepath, "wb") as f:
+                self.log.debug(f"Saving {filename}...")
+                await f.write(await image.read())
 
-        filename = os.path.basename(image.url.path)
-        filepath = os.path.join(output_dir, filename)
-
-        async with aiofiles.open(filepath, "wb") as f:
-            logging.debug("%sSaving %s..." % (_Color.MAGENTA, filename))
-            await f.write(await image.read())
-
-    save_queue.task_done()
-    logging.info("%sSaving images complete!" % _Color.CYAN)
-
-
-if __name__ == "__main__":
-    kwargs = _parse_args()
-    asyncio.run(start_bulk_download(**kwargs))
+        self.save_queue.task_done()
+        self.log.info("Saving images complete!")
