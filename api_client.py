@@ -29,6 +29,10 @@ class _Color:
     GRAY = "\u001b[8m"
 
 
+logging.basicConfig(format=f"{_Color.GRAY}[%(asctime)s %(levelname)s]{_Color.RESET} %(message)s{_Color.RESET}",
+                    level=logging.INFO, datefmt="%H:%M:%S")
+
+
 def _parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", dest="directory", nargs="?", default="images",
@@ -52,9 +56,9 @@ def _parse_args():
     if _args.log_level not in _LOG_LEVELS.keys():
         raise ValueError(f"Log level has to be in {list(_LOG_LEVELS.keys())}! Got '{_args.log_level}' instead.")
     os.makedirs(_args.directory, exist_ok=True)
+    logging.basicConfig(level=_LOG_LEVELS[_args.log_level])
 
-    return dict(directory=_args.directory, page=_args.page, limit=_args.limit,
-                size_arg=size_arg, log_level=_args.log_level)
+    return dict(output_dir=_args.directory, starting_page=_args.page, limit=_args.limit, size_arg=size_arg)
 
 
 async def start_bulk_download(output_dir: str, limit=sys.maxsize, starting_page=0, size_arg="thumbUrl"):
@@ -129,7 +133,5 @@ async def _image_writer(output_dir: str, save_queue: asyncio.Queue):
 
 
 if __name__ == "__main__":
-    args = _parse_args()
-    logging.basicConfig(format=f"{_Color.GRAY}[%(asctime)s %(levelname)s]{_Color.RESET} %(message)s{_Color.RESET}",
-                        level=_LOG_LEVELS[args["log_level"]], datefmt="%H:%M:%S")
-    asyncio.run(start_bulk_download(args["directory"], args["limit"], args["page"], args["size_arg"]))
+    kwargs = _parse_args()
+    asyncio.run(start_bulk_download(**kwargs))
