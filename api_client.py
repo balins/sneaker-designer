@@ -6,18 +6,19 @@ from string import Template
 
 import aiofiles
 import aiohttp
+from tenacity import retry, wait_random_exponential, stop_after_attempt
 
 from logger import Logger
 
 
-class AsyncApiClient:
-    __SNEAKERS_PER_PAGE = 100
-    __API_ENDPOINT = Template(f"https://api.thesneakerdatabase.com/v1/sneakers?limit={__SNEAKERS_PER_PAGE}&page=$page")
+class ApiClient:
+    __SNKRS_PER_PAGE = 100
+    __API_ENDPOINT = Template(f"https://api.thesneakerdatabase.com/v1/sneakers?limit={__SNKRS_PER_PAGE}&page=$page")
     __IMG_SIZE_ARGS = dict(s="thumbUrl", m="imageUrl", l="smallImageUrl")
 
     def __init__(self, output_dir: str, limit=sys.maxsize, starting_page=0, image_size="s", log_level="INFO"):
         try:
-            size_arg = AsyncApiClient.__IMG_SIZE_ARGS[image_size]
+            size_arg = ApiClient.__IMG_SIZE_ARGS[image_size]
         except IndexError:
             raise ValueError(f"Argument size has to be one from 's' (default), 'm', 'l'! Got '{image_size}' instead.")
         if starting_page < 0 or limit < 0:
@@ -50,9 +51,9 @@ class AsyncApiClient:
             await asyncio.gather(*tasks)
         except Exception:
             self.log.error("Unexpected error!")
+            self.log.warning("Terminating...")
             raise
         finally:
-            self.log.warning("Terminating...")
             await self.session.close()
 
         self.log.info("All jobs complete!")
@@ -62,14 +63,16 @@ class AsyncApiClient:
         page = itertools.count(self.starting_page)
 
         while n_fetched < self.limit:
-            resp = await self.session.get(self.__API_ENDPOINT.substitute(page=next(page)))
-            sneakers = (await resp.json())["results"]
+            response = await self.__async_call_with_retry(self.session.get,
+                                                          self.__API_ENDPOINT.substitute(page=next(page)))
+            sneakers = (await self.__async_call_with_retry(response.json))["results"]
+
             if len(sneakers) == 0:
                 self.log.warning("API ran out of sneakers! Cannot fetch more images.")
                 break
 
             image_urls = [sneaker["media"][self.image_size]
-                          for sneaker in sneakers[:min(self.__SNEAKERS_PER_PAGE, self.limit - n_fetched)]
+                          for sneaker in sneakers[:min(self.__SNKRS_PER_PAGE, self.limit - n_fetched)]
                           if sneaker["media"][self.image_size] is not None]
 
             for image_url in image_urls:
@@ -85,7 +88,7 @@ class AsyncApiClient:
             if image_url is None:
                 break
 
-            image = await self.session.get(image_url)
+            image = await self.__async_call_with_retry(self.session.get, image_url)
             self.save_queue.put_nowait(image)
 
         self.download_queue.task_done()
@@ -100,10 +103,17 @@ class AsyncApiClient:
 
             filename = os.path.basename(image.url.path)
             filepath = os.path.join(self.output_dir, filename)
+            content = await self.__async_call_with_retry(image.read)
 
             async with aiofiles.open(filepath, "wb") as f:
                 self.log.debug(f"Saving {filename}...")
-                await f.write(await image.read())
+                await f.write(content)
 
         self.save_queue.task_done()
         self.log.info("Saving images complete!")
+
+    @staticmethod
+    @retry(wait=wait_random_exponential(multiplier=2), stop=stop_after_attempt(3))
+    async def __async_call_with_retry(func, *args, **kwargs):
+        ret = await func(*args, **kwargs)
+        return ret

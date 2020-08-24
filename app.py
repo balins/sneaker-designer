@@ -11,7 +11,7 @@ def download_samples():
                         help="Directory where to save downloaded images")
     parser.add_argument("-l", "--limit", dest="limit", nargs="?", default=sys.maxsize, type=int,
                         help="Limit the number of images to download")
-    parser.add_argument("-f", "--from", dest="page", nargs="?", default=0, type=int,
+    parser.add_argument("-p", "--page", dest="page", nargs="?", default=0, type=int,
                         help="Specify a starting page for API json query (defaults to 0)")
     parser.add_argument("-s", "--size", dest="image_size", nargs="?", default="s",
                         help=f"Pick the size of downloaded images from: 's' (default), 'm', 'l'")
