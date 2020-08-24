@@ -2,7 +2,7 @@ import argparse
 import asyncio
 import sys
 
-from api_client import AsyncApiClient
+from api_client import ApiClient
 
 
 def download_samples():
@@ -19,8 +19,8 @@ def download_samples():
                         help=f"Pick log level from the Python Standard Library 'logging' module (defaults to 'INFO')")
     args = parser.parse_args()
 
-    api_client = AsyncApiClient(output_dir=args.directory, starting_page=args.page, limit=args.limit,
-                                image_size=args.image_size, log_level=args.log_level)
+    api_client = ApiClient(output_dir=args.directory, starting_page=args.page, limit=args.limit,
+                           image_size=args.image_size, log_level=args.log_level)
     asyncio.run(api_client.start_bulk_download())
 
 
