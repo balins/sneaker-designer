@@ -17,7 +17,7 @@ def parse_args():
     parser_download.add_argument("-p", "--page", dest="starting_page", nargs="?", default=0, type=int,
                                  help="Specify a starting page for API json query (defaults to 0)")
     parser_download.add_argument("-s", "--size", dest="image_size", nargs="?", default="s",
-                                 help=f"Pick the size of downloaded images from: 's' (default), 'm', 'l'")
+                                 help="Pick the size of downloaded images from: 's' (default), 'm', 'l'")
     parser_download.set_defaults(func=download_samples)
 
     parser_train = subparsers.add_parser("train", help="Train GAN")
