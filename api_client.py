@@ -1,14 +1,14 @@
 import asyncio
 import itertools
-import os
 import sys
+from pathlib import Path
 from string import Template
 
 import aiofiles
 import aiohttp
 from tenacity import retry, wait_random_exponential, stop_after_attempt
 
-from logger import Logger
+from app_logger import AppLogger
 
 
 class ApiClient:
@@ -16,7 +16,7 @@ class ApiClient:
     __API_ENDPOINT = Template(f"https://api.thesneakerdatabase.com/v1/sneakers?limit={__SNKRS_PER_PAGE}&page=$page")
     __IMG_SIZE_ARGS = dict(s="thumbUrl", m="imageUrl", l="smallImageUrl")
 
-    def __init__(self, output_dir: str, limit=sys.maxsize, starting_page=0, image_size="s", log_level="INFO"):
+    def __init__(self, limit: int = sys.maxsize, starting_page: int = 0, image_size: str = "s"):
         try:
             size_arg = ApiClient.__IMG_SIZE_ARGS[image_size]
         except IndexError:
@@ -24,14 +24,13 @@ class ApiClient:
         if starting_page < 0 or limit < 0:
             raise ValueError("Starting page number and limit must not be negative!")
 
-        os.makedirs(output_dir, exist_ok=True)
-
-        self.output_dir = output_dir
         self.limit = limit
         self.starting_page = starting_page
         self.image_size = size_arg
-        self.log = Logger("AsyncApiClient")
-        self.log.setLevel(log_level)
+        output_dir = Path("images") / "training" / image_size / "sneakers"
+        output_dir.mkdir(exist_ok=True, parents=True)
+        self.output_dir = output_dir
+        self.log = AppLogger("AsyncApiClient")
         self.session = None
         self.download_queue = None
         self.save_queue = None
@@ -101,19 +100,18 @@ class ApiClient:
             if image is None:
                 break
 
-            filename = os.path.basename(image.url.path)
-            filepath = os.path.join(self.output_dir, filename)
+            filepath = self.output_dir / Path(image.url.path).name
             content = await self.__async_call_with_retry(image.read)
 
             async with aiofiles.open(filepath, "wb") as f:
-                self.log.debug(f"Saving {filename}...")
+                self.log.debug(f"Saving {filepath.name}...")
                 await f.write(content)
 
         self.save_queue.task_done()
         self.log.info("Saving images complete!")
 
     @staticmethod
-    @retry(wait=wait_random_exponential(multiplier=2), stop=stop_after_attempt(3))
-    async def __async_call_with_retry(func, *args, **kwargs):
+    @retry(wait=wait_random_exponential(multiplier=3), stop=stop_after_attempt(3))
+    async def __async_call_with_retry(func: callable, *args, **kwargs):
         ret = await func(*args, **kwargs)
         return ret

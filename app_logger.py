@@ -1,7 +1,9 @@
 import logging
 
+APP_LOG_LEVEL = logging.DEBUG
 
-class Logger(logging.Logger):
+
+class AppLogger(logging.Logger):
     _bold_seq = "\033[1m"
     _fmt_reset = "\033[0m"
     log_format = f"{_bold_seq}[%(asctime)s | %(funcName)s - %(levelname)s]{_fmt_reset} %(message)s"
@@ -14,3 +16,4 @@ class Logger(logging.Logger):
         handler = logging.StreamHandler()
         handler.setFormatter(formatter)
         self.addHandler(handler)
+        self.setLevel(APP_LOG_LEVEL)
