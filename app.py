@@ -3,7 +3,7 @@ import asyncio
 import sys
 from pathlib import Path
 
-import gan
+from generator import gan
 from api_client import ApiClient
 
 
@@ -44,9 +44,9 @@ def download_samples(starting_page=0, limit=sys.maxsize, image_size="s"):
 
 def train(epochs, batch_size=256, learning_rate=2e-4, beta1=0.5, G_from=None, D_from=None, test=False):
     if test:
-        img_root = Path("images") / "test" / "s"
+        img_root = Path(__file__).parent / Path("images") / "test" / "s"
     else:
-        img_root = Path("images") / "training" / "s"
+        img_root = Path(__file__).parent / Path("images") / "training" / "s"
 
     gan.start_training(img_root=img_root, num_epochs=epochs,
                        batch_size=batch_size, learning_rate=learning_rate,

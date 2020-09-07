@@ -11,8 +11,8 @@ import torchvision.transforms as transforms
 import torchvision.utils as vutils
 
 from app_logger import AppLogger
-from nets import Discriminator
-from nets import Generator
+from .nets import Discriminator
+from .nets import Generator
 
 # built with https://pytorch.org/tutorials/beginner/dcgan_faces_tutorial.html
 
@@ -25,12 +25,14 @@ ngf = 64
 # Size of feature maps in discriminator
 ndf = 64
 
-ngpu = 1
-device = torch.device("cuda:0" if torch.cuda.is_available() and ngpu > 0 else "cpu")
+ngpu = torch.cuda.device_count()
+__uses_cuda = torch.cuda.is_available() and ngpu > 0
+device = torch.device("cuda:0" if __uses_cuda else "cpu")
+__log.info(f"Using {ngpu if __uses_cuda else 0} GPUs.")
 
 __session_start = datetime.now().strftime("%m%d_%H%M")
-models_dir = Path("models") / __session_start
-plots_dir = Path("plots") / __session_start
+models_dir = Path(__file__).parent.parent / Path("models") / __session_start
+plots_dir = Path(__file__).parent.parent / Path("plots") / __session_start
 
 
 def start_training(img_root, num_epochs, batch_size=256, learning_rate=2e-4, beta1=0.5, G_from=None, D_from=None):
@@ -51,26 +53,34 @@ def start_training(img_root, num_epochs, batch_size=256, learning_rate=2e-4, bet
         netD, optimizerD = _load_state(netD, optimizerD, D_from)
 
     dataloader = _get_dataloader(img_root, batch_size)
-    fake_images, G_losses, D_losses = training_loop(dataloader, num_epochs,
-                                                    netG, optimizerG,
-                                                    netD, optimizerD,
-                                                    criterion=nn.BCELoss())
-
-    _save_plots(fake_images, G_losses, D_losses)
+    training_loop(dataloader, num_epochs,
+                  netG, optimizerG, netD, optimizerD,
+                  criterion=nn.BCELoss())
 
 
 def training_loop(dataloader, num_epochs, netG, optimizerG, netD, optimizerD, criterion):
-    models_dir.mkdir(exist_ok=True, parents=True)
+    def save_status(suffix):
+        _save_model(epoch, netG.state_dict(), optimizerG.state_dict(), G_losses[-1],
+                    f"generator_{suffix}.pt")
+        _save_model(epoch, netD.state_dict(), optimizerD.state_dict(), D_losses[-1],
+                    f"discriminator_{suffix}.pt")
+        with torch.no_grad():
+            fake_ = netG(fixed_noise).detach().cpu()
 
+        generated_fakes = vutils.make_grid(fake_, padding=1, normalize=True)
+        _save_plots(generated_fakes, G_losses, D_losses, suffix=suffix)
+
+    models_dir.mkdir(exist_ok=True, parents=True)
     real_label = 1.
     fake_label = 0.
     G_losses, D_losses = [], []
+    fixed_noise = torch.randn(64, nz, 1, 1, device=device)
     iters = 0
+    epoch = 0
 
     __log.info("Starting Training Loop...")
     try:
-        for epoch in range(num_epochs):
-            # For each batch in the dataloader
+        while epoch < num_epochs:
             for i, data in enumerate(dataloader, 0):
                 netD.zero_grad()
 
@@ -110,29 +120,17 @@ def training_loop(dataloader, num_epochs, netG, optimizerG, netD, optimizerD, cr
                              errD.item(), errG.item(), D_x, D_G_z1, D_G_z2))
 
                 if iters % 1000 == 0:
-                    __log.info(f"Saving intermediate models after {iters} iteration...")
-                    _save_model(num_epochs, netG.state_dict(), optimizerG.state_dict(), G_losses[-1],
-                                f"generator_{iters}.pt")
-                    _save_model(num_epochs, netD.state_dict(), optimizerD.state_dict(), D_losses[-1],
-                                f"discriminator_{iters}.pt")
+                    __log.info(f"Saving intermediate results after {iters} iteration...")
+                    save_status(suffix=iters)
 
                 iters += 1
+            epoch += 1
     except Exception as e:
         __log.error("Exception occured!")
         __log.error(e, exc_info=True)
     finally:
-        __log.info("Saving models before stopping...")
-        _save_model(num_epochs, netG.state_dict(), optimizerG.state_dict(), G_losses[-1], "generator_final.pt")
-        _save_model(num_epochs, netD.state_dict(), optimizerD.state_dict(), D_losses[-1], "discriminator_final.pt")
-
-    fixed_noise = torch.randn(64, nz, 1, 1, device=device)
-
-    with torch.no_grad():
-        fake = netG(fixed_noise).detach().cpu()
-
-    generated_fakes = vutils.make_grid(fake, padding=2, normalize=True)
-
-    return generated_fakes, G_losses, D_losses
+        __log.info(f"Saving final results...")
+        save_status(suffix="final")
 
 
 def _save_model(epoch, model_state_dict, optimizer_state_dict, loss, output_filename):
@@ -149,10 +147,10 @@ def _save_model(epoch, model_state_dict, optimizer_state_dict, loss, output_file
 def _load_state(model, optimizer, state_input_path):
     __log.debug(f"State input path: {state_input_path}")
     checkpoint = torch.load(state_input_path)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    epoch = checkpoint['epoch']
-    loss = checkpoint['loss']
+    model.load_state_dict(checkpoint["model_state_dict"])
+    optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    epoch = checkpoint["epoch"]
+    loss = checkpoint["loss"]
     __log.debug(f"Loaded model state from epoch {epoch}, loss {loss}.")
 
     return model, optimizer
@@ -171,6 +169,7 @@ def _weights_init(m):
 def _get_dataloader(dataroot, batch_size):
     dataset = dset.ImageFolder(root=dataroot,
                                transform=transforms.Compose([
+                                   transforms.Pad(padding=(0, 40), fill=256),
                                    transforms.Resize(__image_size),
                                    transforms.CenterCrop(__image_size),
                                    transforms.ToTensor(),
@@ -181,10 +180,10 @@ def _get_dataloader(dataroot, batch_size):
     return dataloader
 
 
-def _save_plots(fake_images, G_losses, D_losses):
+def _save_plots(fake_images, G_losses, D_losses, suffix):
     plots_dir.mkdir(exist_ok=True, parents=True)
 
-    losses_output_path = plots_dir / "losses.png"
+    losses_output_path = plots_dir / f"losses_{suffix}.png"
     plt.figure(figsize=(10, 5))
     plt.title("Generator and Discriminator Loss During Training")
     plt.plot(G_losses, label="Generator")
@@ -195,9 +194,10 @@ def _save_plots(fake_images, G_losses, D_losses):
     plt.savefig(fname=losses_output_path)
     plt.close()
 
-    generated_output_path = plots_dir / "generated.png"
+    generated_output_path = plots_dir / f"generated_{suffix}.png"
     plt.figure(figsize=(30, 30))
     plt.axis("off")
     plt.title("Generated Images")
     plt.imshow(np.transpose(fake_images, (1, 2, 0)))
     plt.savefig(fname=generated_output_path)
+    plt.close()
