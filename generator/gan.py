@@ -28,7 +28,6 @@ ndf = 64
 ngpu = torch.cuda.device_count()
 __uses_cuda = torch.cuda.is_available() and ngpu > 0
 device = torch.device("cuda:0" if __uses_cuda else "cpu")
-__log.info(f"Using {ngpu if __uses_cuda else 0} GPUs.")
 
 __session_start = datetime.now().strftime("%m%d_%H%M")
 models_dir = Path(__file__).parent.parent / Path("models") / __session_start
@@ -47,22 +46,25 @@ def start_training(img_root, num_epochs, batch_size=256, learning_rate=2e-4, bet
     optimizerG = optim.Adam(netG.parameters(), lr=learning_rate, betas=(beta1, 0.999))
     optimizerD = optim.Adam(netD.parameters(), lr=learning_rate, betas=(beta1, 0.999))
 
+    epochG, epochD = 0, 0
     if G_from is not None:
-        netG, optimizerG = _load_state(netG, optimizerG, G_from)
+        epochG, netG, optimizerG = _load_state(netG, optimizerG, G_from)
     if D_from is not None:
-        netD, optimizerD = _load_state(netD, optimizerD, D_from)
+        epochD, netD, optimizerD = _load_state(netD, optimizerD, D_from)
 
     dataloader = _get_dataloader(img_root, batch_size)
     training_loop(dataloader, num_epochs,
                   netG, optimizerG, netD, optimizerD,
-                  criterion=nn.BCELoss())
+                  criterion=nn.BCELoss(),
+                  g_initial_epoch=epochG, d_initial_epoch=epochD)
 
 
-def training_loop(dataloader, num_epochs, netG, optimizerG, netD, optimizerD, criterion):
+def training_loop(dataloader, num_epochs, netG, optimizerG, netD, optimizerD,
+                  criterion, g_initial_epoch=0, d_initial_epoch=0):
     def save_status(suffix):
-        _save_model(epoch, netG.state_dict(), optimizerG.state_dict(), G_losses[-1],
+        _save_model(g_initial_epoch+epoch, netG.state_dict(), optimizerG.state_dict(), G_losses[-1],
                     f"generator_{suffix}.pt")
-        _save_model(epoch, netD.state_dict(), optimizerD.state_dict(), D_losses[-1],
+        _save_model(d_initial_epoch+epoch, netD.state_dict(), optimizerD.state_dict(), D_losses[-1],
                     f"discriminator_{suffix}.pt")
         with torch.no_grad():
             fake_ = netG(fixed_noise).detach().cpu()
@@ -70,6 +72,7 @@ def training_loop(dataloader, num_epochs, netG, optimizerG, netD, optimizerD, cr
         generated_fakes = vutils.make_grid(fake_, padding=1, normalize=True)
         _save_plots(generated_fakes, G_losses, D_losses, suffix=suffix)
 
+    __log.info(f"Using {ngpu if __uses_cuda else 0} GPU(s).")
     models_dir.mkdir(exist_ok=True, parents=True)
     real_label = 1.
     fake_label = 0.
@@ -153,7 +156,7 @@ def _load_state(model, optimizer, state_input_path):
     loss = checkpoint["loss"]
     __log.debug(f"Loaded model state from epoch {epoch}, loss {loss}.")
 
-    return model, optimizer
+    return epoch, model, optimizer
 
 
 # custom weights initialization called on netG and netD
