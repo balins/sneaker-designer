@@ -14,7 +14,7 @@ from app_logger import AppLogger
 class ApiClient:
     __SNKRS_PER_PAGE = 100
     __API_ENDPOINT = Template(f"https://api.thesneakerdatabase.com/v1/sneakers?limit={__SNKRS_PER_PAGE}&page=$page")
-    __IMG_SIZE_ARGS = dict(s="thumbUrl", m="imageUrl", l="smallImageUrl")
+    __IMG_SIZE_ARGS = dict(s="thumbUrl", m="smallImageUrl", l="imageUrl")
 
     def __init__(self, limit: int = sys.maxsize, starting_page: int = 0, image_size: str = "s"):
         try:

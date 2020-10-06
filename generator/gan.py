@@ -17,13 +17,7 @@ from .nets import Generator
 # built with https://pytorch.org/tutorials/beginner/dcgan_faces_tutorial.html
 
 __log = AppLogger(__name__)
-__image_size = 64
-# Size of z latent vector (i.e. size of generator input)
-nz = 100
-# Size of feature maps in generator
-ngf = 64
-# Size of feature maps in discriminator
-ndf = 64
+__image_size = 256
 
 ngpu = torch.cuda.device_count()
 __uses_cuda = torch.cuda.is_available() and ngpu > 0
@@ -34,9 +28,10 @@ models_dir = Path(__file__).parent.parent / Path("models") / __session_start
 plots_dir = Path(__file__).parent.parent / Path("plots") / __session_start
 
 
-def start_training(img_root, num_epochs, batch_size=256, learning_rate=2e-4, beta1=0.5, G_from=None, D_from=None):
-    netG = Generator(nz=nz, ngf=ngf).to(device)
-    netD = Discriminator(ndf=ndf).to(device)
+def start_training(img_root, num_epochs, batch_size=128, learning_rate=2e-4,
+                   beta1=0.5, nz=128, ngf=128, ndf=128, G_from=None, D_from=None):
+    netG = Generator(nz=nz, ngf=ngf, ngpu=ngpu).to(device)
+    netD = Discriminator(ndf=ndf, ngpu=ngpu).to(device)
     if device.type == "cuda" and ngpu > 1:
         netG = nn.DataParallel(netG, list(range(ngpu)))
         netD = nn.DataParallel(netD, list(range(ngpu)))
@@ -54,12 +49,12 @@ def start_training(img_root, num_epochs, batch_size=256, learning_rate=2e-4, bet
 
     dataloader = _get_dataloader(img_root, batch_size)
     training_loop(dataloader, num_epochs,
-                  netG, optimizerG, netD, optimizerD,
+                  netG, optimizerG, nz, netD, optimizerD,
                   criterion=nn.BCELoss(),
                   g_initial_epoch=epochG, d_initial_epoch=epochD)
 
 
-def training_loop(dataloader, num_epochs, netG, optimizerG, netD, optimizerD,
+def training_loop(dataloader, num_epochs, netG, optimizerG, nz, netD, optimizerD,
                   criterion, g_initial_epoch=0, d_initial_epoch=0):
     def save_status(suffix):
         _save_model(g_initial_epoch+epoch, netG.state_dict(), optimizerG.state_dict(), G_losses[-1],
@@ -117,12 +112,12 @@ def training_loop(dataloader, num_epochs, netG, optimizerG, netD, optimizerD,
                 G_losses.append(errG.item())
                 D_losses.append(errD.item())
 
-                if i % 50 == 0:
+                if i % 100 == 0:
                     print("[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tD(x): %.4f\tD(G(z)): %.4f / %.4f"
                           % (epoch, num_epochs, i, len(dataloader),
                              errD.item(), errG.item(), D_x, D_G_z1, D_G_z2))
 
-                if iters % 1000 == 0:
+                if iters > 0 and iters % 1000 == 0:
                     __log.info(f"Saving intermediate results after {iters} iteration...")
                     save_status(suffix=iters)
 
@@ -172,7 +167,7 @@ def _weights_init(m):
 def _get_dataloader(dataroot, batch_size):
     dataset = dset.ImageFolder(root=dataroot,
                                transform=transforms.Compose([
-                                   transforms.Pad(padding=(0, 40), fill=256),
+                                   transforms.Pad(padding=(0, 86), fill=256),
                                    transforms.Resize(__image_size),
                                    transforms.CenterCrop(__image_size),
                                    transforms.ToTensor(),

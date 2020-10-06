@@ -24,12 +24,18 @@ def parse_args():
     parser_train.add_argument("-t", "--test", action="store_true", help="Run training on smaller dataset")
     parser_train.add_argument("-e", "--epochs", dest="epochs", required=True, type=int, help="Set the number of "
                                                                                              "epochs for training")
-    parser_train.add_argument("-b", "--batch_size", dest="batch_size", nargs="?", default=256, type=int,
-                              help="Set batch size for training (defaults to 256)")
-    parser_train.add_argument("-l", "--learning_rate", dest="learning_rate", nargs="?", default=2e-4, type=float,
+    parser_train.add_argument("-b", "--batch_size", dest="batch_size", nargs="?", default=128, type=int,
+                              help="Set batch size for training (defaults to 128)")
+    parser_train.add_argument("-lr", "--learning_rate", dest="learning_rate", nargs="?", default=2e-4, type=float,
                               help="Set learning rate for optimizers (defaults to 0.0002)")
     parser_train.add_argument("--beta1", dest="beta1", nargs="?", default=0.5, type=float,
                               help="Set beta1 parameter for optimizers (defaults to 0.5)")
+    parser_train.add_argument("--nz", dest="nz", nargs="?", default=128, type=int,
+                              help="Set size of latent vector for generator (defaults to 128)")
+    parser_train.add_argument("--ngf", dest="ngf", nargs="?", default=128, type=int,
+                              help="Set size for feature map in generator (defaults to 128)")
+    parser_train.add_argument("--ndf", dest="ndf", nargs="?", default=128, type=int,
+                              help="Set size for feature map in discriminator (defaults to 128)")
     parser_train.add_argument("--gfrom", dest="G_from", help="Load existing generator from path")
     parser_train.add_argument("--dfrom", dest="D_from", help="Load existing discriminator from path")
     parser_train.set_defaults(func=train)
@@ -42,15 +48,16 @@ def download_samples(starting_page=0, limit=sys.maxsize, image_size="s"):
     asyncio.run(api_client.start_bulk_download())
 
 
-def train(epochs, batch_size=256, learning_rate=2e-4, beta1=0.5, G_from=None, D_from=None, test=False):
+def train(epochs, batch_size=128, learning_rate=2e-4, beta1=0.5,
+          nz=128, ngf=128, ndf=128, G_from=None, D_from=None, test=False):
     if test:
-        img_root = Path(__file__).parent / Path("images") / "test" / "s"
+        img_root = Path(__file__).parent / Path("images") / "test" / "m"
     else:
-        img_root = Path(__file__).parent / Path("images") / "training" / "s"
+        img_root = Path(__file__).parent / Path("images") / "training" / "m"
 
     gan.start_training(img_root=img_root, num_epochs=epochs,
                        batch_size=batch_size, learning_rate=learning_rate,
-                       beta1=beta1, G_from=G_from, D_from=D_from)
+                       beta1=beta1, nz=nz, ngf=ngf, ndf=ndf, G_from=G_from, D_from=D_from)
 
 
 if __name__ == "__main__":
