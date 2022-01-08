@@ -5,4 +5,4 @@ tenacity~=6.2.0
 torch~=1.6.0
 torchvision~=0.7.0
 uvloop~=0.14.0
-numpy~=1.19.1
+numpy>=1.21
