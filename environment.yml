@@ -1,0 +1,13 @@
+name: snkrs
+channels:
+  - conda-forge
+  - pytorch
+  - nvidia
+dependencies:
+  - matplotlib=3.6.2
+  - numpy=1.23.4
+  - python=3.10.6
+  - pytorch=1.13.0
+  - pytorch-cuda=11.7
+  - requests=2.28.1
+  - torchvision=0.14.0
