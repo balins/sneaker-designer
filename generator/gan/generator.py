@@ -2,7 +2,7 @@ import torch.nn as nn
 
 class Generator(nn.Module):
     def __init__(self, nz, ngf):
-        super(Generator, self).__init__()
+        super().__init__()
 
         def block(c_in, c_out, kernel_size, stride, padding, dropout=False):
             layers = [

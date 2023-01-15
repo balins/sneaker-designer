@@ -15,8 +15,6 @@ from .generator import Generator
 from .discriminator import Discriminator
 import utils
 
-# built with https://pytorch.org/tutorials/beginner/dcgan_faces_tutorial.html
-
 seed = 42
 # seed = random.randint(1, 10000)
 random.seed(seed)
@@ -72,7 +70,7 @@ def start_training(img_root, num_epochs, G_from=None, D_from=None):
 
     criterion = nn.BCELoss().to(gpu)
     dataloader = utils.dataset.dataloader(img_root, batch_size)
-    initial_epoch = min(G_epoch, D_epoch)
+    initial_epoch = max(G_epoch, D_epoch)
 
     _training_loop(dataloader, num_epochs,
                    G_net, G_optimizer, D_net, D_optimizer,
@@ -111,6 +109,7 @@ def _training_loop(dataloader, num_epochs, G_net, G_optimizer, D_net, D_optimize
     try:
         while epoch < last_epoch:
             for iter, data in enumerate(dataloader, 0):
+                # Flip labels with probability 0.005 (every ~200 iterations) to confuse discriminator
                 should_invert_labels = random.random() < 0.005
 
                 ############################
@@ -123,9 +122,10 @@ def _training_loop(dataloader, num_epochs, G_net, G_optimizer, D_net, D_optimize
                 real = data[0].to(gpu)
                 b_size = real.size(0)
 
-                # # Add a bit of random noise to the real images
-                # d_noise = 0.1 * (torch.randn(real.size(), device=gpu)) * ((last_epoch-epoch) / last_epoch)
-                # real += d_noise
+                # Add a bit of random noise to the real images
+                # d_noise = 0.1 * (torch.randn(real.size(), device=gpu)
+                #                  ) * ((last_epoch-epoch) / last_epoch)
+                # real = torch.clamp(real + d_noise, min=-1., max=1.)
 
                 if should_invert_labels:
                     probably_real_label = fake_label

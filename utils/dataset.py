@@ -10,8 +10,8 @@ import torchvision.transforms.functional as F
 from .logger import Logger
 
 IMAGE_SIZE = 64
-DSET_MEAN = torch.tensor([0.8516, 0.8513, 0.8511])
-DSET_STD = torch.tensor([0.2303, 0.2305, 0.2310])
+DSET_MEAN = torch.tensor([0.7031, 0.7026, 0.7022])
+DSET_STD = torch.tensor([0.4606, 0.4610, 0.4621])
 logger = Logger(__name__)
 
 
@@ -24,8 +24,11 @@ def get_transforms():
         transforms.ColorJitter(
             0.05, 0.05, 0.1, 0.5),
         transforms.Lambda(random_adjust_sharpness),
-        transforms.ToTensor()
+        transforms.RandomInvert(0.5),
+        transforms.ToTensor(),
+        transforms.Lambda(minus_one_to_one)
     ]
+
 
 def white_square_padding(img):
     w, h = img.size
@@ -41,10 +44,7 @@ def white_square_padding(img):
 
 
 def minus_one_to_one(tensor):
-    tmin = tensor.min()
-    tmax = tensor.max()
-
-    return ((tensor - tmin) / (tmax - tmin)) * 2 - 1
+    return tensor * 2. - 1.
 
 
 def random_adjust_sharpness(img):
@@ -54,23 +54,51 @@ def random_adjust_sharpness(img):
         return img
 
 
-def dataloader(dataroot, batch_size=128, dataloader_workers=12, recalculate_mean_std=False):
+def dataloader(dataroot, batch_size=128, dataloader_workers=12, drop_last=False, recalculate_mean_std=False):
     if recalculate_mean_std:
         mean, std = calculate_mean_std(dataroot, dataloader_workers)
     else:
         mean, std = DSET_MEAN, DSET_STD
 
     transforms_with_normalization = get_transforms()
-    transforms_with_normalization.append(transforms.Normalize(mean, std))
-    transforms_with_normalization.append(transforms.Lambda(torch.tanh))
+    # transforms_with_normalization.append(transforms.Normalize(mean, std))
 
     dataset = dset.ImageFolder(
         root=dataroot, transform=transforms.Compose(transforms_with_normalization))
 
     dataloader = torch.utils.data.DataLoader(
-        dataset, batch_size=batch_size, shuffle=True, num_workers=dataloader_workers, pin_memory=True)
+        dataset, batch_size=batch_size, shuffle=True, num_workers=dataloader_workers, pin_memory=True, drop_last=drop_last)
 
     return dataloader
+
+
+def calculate_mean_std(dataroot, dataloader_workers=12):
+    logger.info(
+        f"Calculating mean and std of the data in {dataroot}...")
+
+    dataset = dset.ImageFolder(
+        root=dataroot, transform=transforms.Compose(get_transforms()))
+
+    loader = torch.utils.data.DataLoader(
+        dataset, batch_size=128, shuffle=False, num_workers=dataloader_workers)
+
+    mean = 0.
+    std = 0.
+
+    for images, _ in loader:
+        # batch size (the last batch can have smaller size!)
+        batch_samples = images.size(0)
+        images = images.view(batch_samples, images.size(1), -1)
+        mean += images.mean(2).sum(0)
+        std += images.std(2).sum(0)
+
+    mean /= len(loader.dataset)
+    std /= len(loader.dataset)
+
+    # Mean: tensor([0.7031, 0.7026, 0.7022]), Std: tensor([0.4606, 0.4610, 0.4621])
+    logger.info("Mean: {mean}, Std: {std}")
+
+    return mean, std
 
 
 def replace_transparent_images(directory):
@@ -95,29 +123,5 @@ def replace_transparent_images(directory):
                 os.remove(full_path)
                 n_converted += 1
 
-
-def calculate_mean_std(dataroot, dataloader_workers=12):
-    dataset = dset.ImageFolder(
-        root=dataroot, transform=transforms.Compose(get_transforms()))
-
-    loader = torch.utils.data.DataLoader(
-        dataset, batch_size=128, shuffle=False, num_workers=dataloader_workers)
-
-    mean = 0.
-    std = 0.
-
-    for images, _ in loader:
-        # batch size (the last batch can have smaller size!)
-        batch_samples = images.size(0)
-        images = images.view(batch_samples, images.size(1), -1)
-        mean += images.mean(2).sum(0)
-        std += images.std(2).sum(0)
-
-    mean /= len(loader.dataset)
-    std /= len(loader.dataset)
-
-    # Mean: tensor([0.8414, 0.8411, 0.8409]), Std: tensor([0.2244, 0.2246, 0.2252])
     logger.info(
-        f"Calculated mean and std of the data in {dataroot}: Mean: {mean}, Std: {std}")
-
-    return mean, std
+        f"{n_converted} were replaced with their no-transparency versions")

@@ -2,8 +2,9 @@ import argparse
 import sys
 from pathlib import Path
 
-from generator.gan import gan
 from utils.scraper import Scraper
+from generator.gan import gan
+from generator.ddpm import ddpm
 
 
 def parse_args():
@@ -16,16 +17,21 @@ def parse_args():
                                  help="Limit the number of images to download")
     parser_download.set_defaults(func=download_samples)
 
-    parser_train = subparsers.add_parser("train", help="Train GAN")
-    parser_train.add_argument(
-        "-t", "--test", action="store_true", help="Run training on smaller dataset")
-    parser_train.add_argument("-e", "--epochs", dest="epochs", required=True, type=int, help="Set the number of "
-                                                                                             "epochs for training")
-    parser_train.add_argument("--gfrom", dest="G_from",
-                              help="Load existing generator from a path")
-    parser_train.add_argument("--dfrom", dest="D_from",
-                              help="Load existing discriminator from a path")
-    parser_train.set_defaults(func=train)
+    parser_gan = subparsers.add_parser("gan", help="Train GAN")
+    parser_gan.add_argument("-e", "--epochs", dest="epochs", required=True, type=int, help="Set the number of "
+                            "epochs for training")
+    parser_gan.add_argument("--gfrom", dest="G_from",
+                            help="Load existing generator from a path")
+    parser_gan.add_argument("--dfrom", dest="D_from",
+                            help="Load existing discriminator from a path")
+    parser_gan.set_defaults(func=run_gan)
+
+    parser_ddpm = subparsers.add_parser("ddpm", help="Train DDPM")
+    parser_ddpm.add_argument("-e", "--epochs", dest="epochs", required=True, type=int, help="Set the number of "
+                             "epochs for training")
+    parser_ddpm.add_argument("--from", dest="load_from",
+                             help="Load existing UNet from a path")
+    parser_ddpm.set_defaults(func=run_ddpm)
 
     return parser.parse_args()
 
@@ -33,16 +39,21 @@ def parse_args():
 def download_samples(limit=sys.maxsize):
     Scraper.run(limit=limit)
 
+# --gfrom C:\Users\balin\Documents\sneaker-designer\gan\models\0114_1554\g105.pt
+# --dfrom C:\Users\balin\Documents\sneaker-designer\gan\models\0114_1554\d105.pt
 
-def train(epochs, G_from=None, D_from=None, test=False):
-    root = Path(__file__).parent / "images"
 
-    if test:
-        img_root = root / "test"
-    else:
-        img_root = root / "train"
+def run_gan(epochs, G_from=None, D_from=None):
+    root = Path(__file__).parent / "images" / "train"
 
-    gan.start_training(img_root=img_root, num_epochs=epochs, G_from=G_from, D_from=D_from)
+    gan.start_training(img_root=root, num_epochs=epochs,
+                       G_from=G_from, D_from=D_from)
+
+
+def run_ddpm(epochs, load_from=None):
+    root = Path(__file__).parent / "images" / "train"
+
+    ddpm.start_training(img_root=root, num_epochs=epochs, load_from=load_from)
 
 
 if __name__ == "__main__":
